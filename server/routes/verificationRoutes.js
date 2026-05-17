@@ -38,11 +38,27 @@ const upload = multer({
  * POST /api/verification/upload-documents
  * Upload teacher verification documents
  */
-router.post('/upload-documents', verifyToken, upload.fields([
-    { name: 'id_proof', maxCount: 1 },
-    { name: 'teaching_certificate', maxCount: 1 },
-    { name: 'degree', maxCount: 1 }
-]), async (req, res) => {
+router.post('/upload-documents', verifyToken, (req, res, next) => {
+    upload.fields([
+        { name: 'id_proof', maxCount: 1 },
+        { name: 'teaching_certificate', maxCount: 1 },
+        { name: 'degree', maxCount: 1 }
+    ])(req, res, (err) => {
+        if (err) {
+            console.error('Multer/Cloudinary upload error:', err);
+            if (err.stack) {
+                console.error('Error stack:', err.stack);
+            } else {
+                console.error('Error JSON:', JSON.stringify(err, null, 2));
+            }
+            return res.status(500).json({
+                message: 'Failed to upload documents during file processing',
+                error: err.message || JSON.stringify(err)
+            });
+        }
+        next();
+    });
+}, async (req, res) => {
     try {
         const userId = req.user.id;
 
@@ -127,9 +143,14 @@ router.post('/upload-documents', verifyToken, upload.fields([
 
     } catch (err) {
         console.error('Document upload error:', err);
+        if (err.stack) {
+            console.error('Error stack:', err.stack);
+        } else {
+            console.error('Error JSON:', JSON.stringify(err, null, 2));
+        }
         res.status(500).json({
             message: 'Failed to upload documents',
-            error: err.message
+            error: err.message || JSON.stringify(err)
         });
     }
 });
