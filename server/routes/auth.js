@@ -35,22 +35,29 @@ router.post('/register', async (req, res) => {
         });
 
         if (existingUser) {
-            // Determine which field is duplicate
-            const isDuplicateEmail = existingUser.email.toLowerCase() === email.toLowerCase();
-            const isDuplicateUsername = existingUser.username.toLowerCase() === username.toLowerCase();
+            // If the user exists but their email is not verified, delete them so they can register again
+            if (!existingUser.isEmailVerified) {
+                const TeacherVerification = require('../models/TeacherVerification');
+                await TeacherVerification.deleteMany({ userId: existingUser._id });
+                await User.deleteOne({ _id: existingUser._id });
+            } else {
+                // Determine which field is duplicate
+                const isDuplicateEmail = existingUser.email.toLowerCase() === email.toLowerCase();
+                const isDuplicateUsername = existingUser.username.toLowerCase() === username.toLowerCase();
 
-            let message = 'User already exists';
-            if (isDuplicateEmail && isDuplicateUsername) {
-                message = 'A user with that email and username already exists';
-            } else if (isDuplicateEmail) {
-                message = 'A user with that email already exists';
-            } else if (isDuplicateUsername) {
-                message = 'A user with that username already exists';
+                let message = 'User already exists';
+                if (isDuplicateEmail && isDuplicateUsername) {
+                    message = 'A user with that email and username already exists';
+                } else if (isDuplicateEmail) {
+                    message = 'A user with that email already exists';
+                } else if (isDuplicateUsername) {
+                    message = 'A user with that username already exists';
+                }
+                return res.status(400).json({
+                    message,
+                    error: 'USER_EXISTS'
+                });
             }
-            return res.status(400).json({
-                message,
-                error: 'USER_EXISTS'
-            });
         }
 
         // Hash password
