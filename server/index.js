@@ -322,29 +322,40 @@ io.on('connection', (socket) => {
   socket.on('join-room', async (roomId, userData) => {
     console.log(`User ${socket.id} trying to join room ${roomId}`, userData);
 
-    if (userData && userData.role === 'student') {
+    let isHost = false;
+    let board = null;
+    try {
+      board = await Board.findOne({ roomId });
+      if (board && userData && board.createdBy.toString() === userData.userId) {
+        isHost = true;
+      }
+    } catch (err) {
+      console.error('Error finding board for host check:', err);
+    }
+
+    if (userData && !isHost) {
       if (!waitingRooms.has(roomId)) {
         waitingRooms.set(roomId, new Map());
       }
-      waitingRooms.get(roomId).set(socket.id, { ...userData, socketId: socket.id });
+      waitingRooms.get(roomId).set(socket.id, { ...userData, socketId: socket.id, isHost: false });
       
-      // Notify teacher(s) in the room
-      socket.to(roomId).emit('student-waiting', { ...userData, socketId: socket.id });
+      // Notify host(s) in the room
+      socket.to(roomId).emit('participant-waiting', { ...userData, socketId: socket.id, isHost: false });
       
-      // Tell student they are waiting
+      // Tell participant they are waiting
       socket.emit('waiting-for-approval');
-      return; // Stop here, wait for teacher approval
+      return; // Stop here, wait for host approval
     }
 
-    // For teachers, join immediately
+    // For hosts, join immediately
     socket.join(roomId);
-    console.log(`User ${socket.id} joined room ${roomId}`, userData);
+    console.log(`Host ${socket.id} joined room ${roomId}`, userData);
 
-    // If teacher joins, send them the current waiting list
-    if (userData && userData.role === 'teacher' && waitingRooms.has(roomId)) {
+    // If host joins, send them the current waiting list
+    if (isHost && waitingRooms.has(roomId)) {
       const waiting = Array.from(waitingRooms.get(roomId).values());
       if (waiting.length > 0) {
-        socket.emit('waiting-students-list', waiting);
+        socket.emit('waiting-participants-list', waiting);
       }
     }
 
@@ -391,27 +402,29 @@ io.on('connection', (socket) => {
         .populate('allowedStudents', 'username email')
         .populate('createdBy', 'username');
 
-      if (board) {
-        socket.emit('load-board', {
-          elements: board.elements,
-          allowedStudents: board.allowedStudents || [],
-          boardName: board.name,
-          teacherName: board.createdBy?.username || 'Unknown Teacher'
-        });
-      } else {
-        socket.emit('load-board', {
-          elements: [],
-          allowedStudents: [],
-          boardName: 'Untitled Board',
-          teacherName: 'Unknown Teacher'
-        });
-      }
+        if (board) {
+          socket.emit('load-board', {
+            elements: board.elements,
+            allowedParticipants: board.allowedStudents || [],
+            boardName: board.name,
+            hostName: board.createdBy?.username || 'Unknown Host',
+            hostId: board.createdBy?._id || board.createdBy
+          });
+        } else {
+          socket.emit('load-board', {
+            elements: [],
+            allowedParticipants: [],
+            boardName: 'Untitled Board',
+            hostName: 'Unknown Host',
+            hostId: null
+          });
+        }
     } catch (err) {
       console.error('Error loading board:', err);
     }
   });
 
-  socket.on('accept-student', async ({ roomId, socketId, userData }) => {
+  socket.on('accept-participant', async ({ roomId, socketId, userData }) => {
     if (waitingRooms.has(roomId)) {
       waitingRooms.get(roomId).delete(socketId);
     }
@@ -457,7 +470,7 @@ io.on('connection', (socket) => {
         }
       }
 
-      // Load Board History for the accepted student
+      // Load Board History for the accepted participant
       try {
         let board = await Board.findOne({ roomId })
           .populate('allowedStudents', 'username email')
@@ -466,16 +479,18 @@ io.on('connection', (socket) => {
         if (board) {
           studentSocket.emit('load-board', {
             elements: board.elements,
-            allowedStudents: board.allowedStudents || [],
+            allowedParticipants: board.allowedStudents || [],
             boardName: board.name,
-            teacherName: board.createdBy?.username || 'Unknown Teacher'
+            hostName: board.createdBy?.username || 'Unknown Host',
+            hostId: board.createdBy?._id || board.createdBy
           });
         } else {
           studentSocket.emit('load-board', {
             elements: [],
-            allowedStudents: [],
+            allowedParticipants: [],
             boardName: 'Untitled Board',
-            teacherName: 'Unknown Teacher'
+            hostName: 'Unknown Host',
+            hostId: null
           });
         }
       } catch (err) {
@@ -484,7 +499,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('decline-student', ({ roomId, socketId }) => {
+  socket.on('decline-participant', ({ roomId, socketId }) => {
     if (waitingRooms.has(roomId)) {
       waitingRooms.get(roomId).delete(socketId);
     }
@@ -657,7 +672,7 @@ io.on('connection', (socket) => {
   });
 
   // Grant editing permission to specific student
-  socket.on('grant-student-permission', async ({ roomId, studentId }) => {
+  socket.on('grant-participant-permission', async ({ roomId, studentId }) => {
     try {
       await Board.findOneAndUpdate(
         { roomId },
@@ -678,7 +693,7 @@ io.on('connection', (socket) => {
   });
 
   // Revoke editing permission from specific student
-  socket.on('revoke-student-permission', async ({ roomId, studentId }) => {
+  socket.on('revoke-participant-permission', async ({ roomId, studentId }) => {
     try {
       await Board.findOneAndUpdate(
         { roomId },
