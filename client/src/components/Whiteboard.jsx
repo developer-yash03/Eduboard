@@ -60,6 +60,10 @@ const Whiteboard = () => {
     const [allowedStudents, setAllowedStudents] = useState([]); // Students with permission
     const [hasEditPermission, setHasEditPermission] = useState(false); // Current student's permission
     const [showStudentPanel, setShowStudentPanel] = useState(false); // Panel visibility
+    
+    // Waiting room state
+    const [isWaitingForApproval, setIsWaitingForApproval] = useState(false);
+    const [waitingStudents, setWaitingStudents] = useState([]);
 
     const [currentElement, setCurrentElement] = useState(null);
     const [selectedElement, setSelectedElement] = useState(null); // { index, offsetX, offsetY, initialWidth, initialHeight }
@@ -95,24 +99,15 @@ const Whiteboard = () => {
             try {
                 const response = await api.get(`/api/boards/${roomId}`);
                 if (!response.data) {
-                    // Board doesn't exist, clear everything
-                    setElements([]);
-                    setHistory([]);
-                    setRedoStack([]);
+                    alert('This board does not exist or has been deleted');
+                    navigate('/dashboard', { replace: true });
                 }
             } catch (error) {
                 if (error.response?.status === 404) {
                     // Board was deleted, clear everything
                     console.log('[BOARD-CHECK] Board was deleted (404), clearing state');
-                    setElements([]);
-                    setHistory([]);
-                    setRedoStack([]);
-
-                    // Clear canvas
-                    if (canvasRef.current) {
-                        const ctx = canvasRef.current.getContext('2d');
-                        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-                    }
+                    alert('This board does not exist or has been deleted');
+                    navigate('/dashboard', { replace: true });
                 }
             }
         };
@@ -144,6 +139,32 @@ const Whiteboard = () => {
             if (window.remoteStrokes && element.userId) {
                 delete window.remoteStrokes[element.userId];
             }
+        });
+
+        // Waiting Room Listeners
+        socket.on('waiting-for-approval', () => {
+            setIsWaitingForApproval(true);
+        });
+
+        socket.on('student-waiting', (student) => {
+            if (user?.role === 'teacher') {
+                setWaitingStudents(prev => [...prev.filter(s => s.socketId !== student.socketId), student]);
+            }
+        });
+
+        socket.on('waiting-students-list', (students) => {
+            if (user?.role === 'teacher') {
+                setWaitingStudents(students);
+            }
+        });
+
+        socket.on('join-accepted', () => {
+            setIsWaitingForApproval(false);
+        });
+
+        socket.on('join-declined', () => {
+            alert('Your request to join the board was declined by the teacher.');
+            navigate('/dashboard', { replace: true });
         });
 
         // Real-time stroke updates (while drawing)
@@ -322,23 +343,6 @@ const Whiteboard = () => {
             });
         });
 
-        // Draw element (receive new elements from other users)
-        socket.on('draw-element', (element) => {
-            setElements(prev => {
-                // Check if element already exists (by ID)
-                const existingIndex = prev.findIndex(el => el.id === element.id);
-                if (existingIndex !== -1) {
-                    // Update existing element
-                    const updated = [...prev];
-                    updated[existingIndex] = element;
-                    return updated;
-                } else {
-                    // Add new element
-                    return [...prev, element];
-                }
-            });
-        });
-
         return () => {
             socket.off('draw-element');
             socket.off('drawing-stroke');
@@ -352,6 +356,11 @@ const Whiteboard = () => {
             socket.off('delete-element');
             socket.off('update-element');
             socket.off('sync-state');
+            socket.off('waiting-for-approval');
+            socket.off('student-waiting');
+            socket.off('waiting-students-list');
+            socket.off('join-accepted');
+            socket.off('join-declined');
         };
     }, [socket]);
 
@@ -1849,8 +1858,61 @@ const Whiteboard = () => {
                 onChange={handleImageUpload}
             />
 
-            {/* Cursors Overlay */}
-            {/* Cursors Overlay */}
+            {/* Waiting For Approval Overlay */}
+            <AnimatePresence>
+                {isWaitingForApproval && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="absolute inset-0 z-[100] flex items-center justify-center bg-slate-900/80 backdrop-blur-md"
+                    >
+                        <div className="bg-slate-800 border border-slate-700 p-8 rounded-2xl shadow-2xl text-center max-w-sm">
+                            <div className="animate-spin w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+                            <h2 className="text-xl font-bold text-white mb-2">Waiting for Approval</h2>
+                            <p className="text-slate-400 text-sm">Please wait while the teacher reviews your request to join the room.</p>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Waiting Students Notifications (Teacher) */}
+            <div className="absolute top-20 left-4 z-[90] flex flex-col gap-2">
+                <AnimatePresence>
+                    {user?.role === 'teacher' && waitingStudents.map((student) => (
+                        <motion.div
+                            key={student.socketId}
+                            initial={{ x: -50, opacity: 0 }}
+                            animate={{ x: 0, opacity: 1 }}
+                            exit={{ x: -50, opacity: 0 }}
+                            className="bg-slate-800 border border-slate-700 p-4 rounded-xl shadow-xl w-72 pointer-events-auto"
+                        >
+                            <h4 className="text-white font-medium mb-1">{student.username} wants to join</h4>
+                            <p className="text-xs text-slate-400 mb-3">Role: {student.role}</p>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => {
+                                        socket.emit('accept-student', { roomId, socketId: student.socketId, userData: student });
+                                        setWaitingStudents(prev => prev.filter(s => s.socketId !== student.socketId));
+                                    }}
+                                    className="flex-1 bg-green-500/20 text-green-400 py-1.5 rounded text-sm hover:bg-green-500/30 transition-colors"
+                                >
+                                    Admit
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        socket.emit('decline-student', { roomId, socketId: student.socketId });
+                                        setWaitingStudents(prev => prev.filter(s => s.socketId !== student.socketId));
+                                    }}
+                                    className="flex-1 bg-red-500/20 text-red-400 py-1.5 rounded text-sm hover:bg-red-500/30 transition-colors"
+                                >
+                                    Decline
+                                </button>
+                            </div>
+                        </motion.div>
+                    ))}
+                </AnimatePresence>
+            </div>
 
             {/* Cursors Overlay */}
             {Object.entries(cursors).map(([userId, cursor]) => (
