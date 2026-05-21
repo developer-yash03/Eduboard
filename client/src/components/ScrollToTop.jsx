@@ -5,6 +5,13 @@ import { FaArrowUp } from 'react-icons/fa';
 import { useLocation } from 'react-router-dom';
 
 const SCROLL_THRESHOLD = 300;
+const EXCLUDED_PATHS = [
+    '/login',
+    '/signup',
+    '/forgot-password',
+    '/verify-otp',
+    '/reset-password',
+];
 
 const getScrollTop = target => {
     const pageScrollTop = Math.max(
@@ -47,6 +54,7 @@ const scrollEverythingToTop = (behavior = 'auto') => {
 export default function ScrollToTop() {
     const { pathname } = useLocation();
     const [isVisible, setIsVisible] = useState(false);
+    const isExcludedPath = EXCLUDED_PATHS.includes(pathname);
 
     useEffect(() => {
         // Scroll immediately
@@ -104,7 +112,7 @@ export default function ScrollToTop() {
 
     const button = (
         <AnimatePresence>
-            {isVisible && (
+            {isVisible && !isExcludedPath && (
                 <motion.button
                     type="button"
                     aria-label="Scroll to top"
