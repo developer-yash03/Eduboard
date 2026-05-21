@@ -454,4 +454,28 @@ router.post('/resend-registration-otp', async (req, res) => {
     }
 });
 
+// CHECK ROLE
+router.post('/check-role', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email || typeof email !== 'string') {
+            return res.status(400).json({ message: 'A valid email string is required' });
+        }
+
+        // Escape regex special characters to prevent regex injection or parsing crash
+        const escapedEmail = email.trim().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+
+        // Find user by email (case-insensitive and trimmed)
+        const user = await User.findOne({ email: { $regex: new RegExp(`^${escapedEmail}$`, 'i') } });
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        res.status(200).json({ role: user.role });
+    } catch (err) {
+        console.error('Check role error:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
 module.exports = router;
